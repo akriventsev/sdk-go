@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
 	commonpb "go.temporal.io/api/common/v1"
 
 	"go.temporal.io/sdk/activity"
@@ -164,6 +165,8 @@ type TracerStartSpanOptions struct {
 	// IdempotencyKey should be treated as opaque data by Tracer implementations.
 	// Do not attempt to parse it, as the format is subject to change.
 	IdempotencyKey string
+
+	Kind trace.SpanKind
 }
 
 // TracerSpanRef represents a span reference such as a parent.
@@ -263,6 +266,7 @@ func (t *tracingClientOutboundInterceptor) ExecuteWorkflow(
 		Tags:      map[string]string{workflowIDTagKey: in.Options.ID},
 		ToHeader:  true,
 		Time:      time.Now(),
+		Kind:      trace.SpanKindServer,
 	})
 	if err != nil {
 		return nil, err
@@ -287,6 +291,7 @@ func (t *tracingClientOutboundInterceptor) SignalWorkflow(ctx context.Context, i
 		Tags:      map[string]string{workflowIDTagKey: in.WorkflowID},
 		ToHeader:  true,
 		Time:      time.Now(),
+		Kind:      trace.SpanKindClient,
 	})
 	if err != nil {
 		return err
@@ -309,6 +314,7 @@ func (t *tracingClientOutboundInterceptor) SignalWithStartWorkflow(
 		Name:      in.WorkflowType,
 		Tags:      map[string]string{workflowIDTagKey: in.Options.ID},
 		ToHeader:  true,
+		Kind:      trace.SpanKindClient,
 	})
 	if err != nil {
 		return nil, err
@@ -336,6 +342,7 @@ func (t *tracingClientOutboundInterceptor) QueryWorkflow(
 		Tags:      map[string]string{workflowIDTagKey: in.WorkflowID},
 		ToHeader:  true,
 		Time:      time.Now(),
+		Kind:      trace.SpanKindClient,
 	})
 	if err != nil {
 		return nil, err
@@ -388,6 +395,7 @@ func (t *tracingActivityInboundInterceptor) ExecuteActivity(
 		},
 		FromHeader: true,
 		Time:       info.StartedTime,
+		Kind:       trace.SpanKindServer,
 	})
 	if err != nil {
 		return nil, err
@@ -468,6 +476,7 @@ func (t *tracingWorkflowInboundInterceptor) HandleSignal(ctx workflow.Context, i
 		FromHeader:     true,
 		Time:           time.Now(),
 		IdempotencyKey: t.newIdempotencyKey(),
+		Kind:           trace.SpanKindServer,
 	})
 	if err != nil {
 		return err
@@ -499,6 +508,7 @@ func (t *tracingWorkflowInboundInterceptor) HandleQuery(
 		},
 		FromHeader: true,
 		Time:       time.Now(),
+		Kind:       trace.SpanKindServer,
 		// We intentionally do not set IdempotencyKey here because queries are not recorded in
 		// workflow history. When the tracing interceptor's span counter is reset between workflow
 		// replays, old queries will not be processed which could result in idempotency key
@@ -526,7 +536,7 @@ func (t *tracingWorkflowOutboundInterceptor) ExecuteActivity(
 	args ...interface{},
 ) workflow.Future {
 	// Start span writing to header
-	span, ctx, err := t.startNonReplaySpan(ctx, "StartActivity", activityType, true)
+	span, ctx, err := t.startNonReplaySpan(ctx, "StartActivity", activityType, true, trace.SpanKindClient)
 	if err != nil {
 		return err
 	}
@@ -541,7 +551,7 @@ func (t *tracingWorkflowOutboundInterceptor) ExecuteLocalActivity(
 	args ...interface{},
 ) workflow.Future {
 	// Start span writing to header
-	span, ctx, err := t.startNonReplaySpan(ctx, "StartActivity", activityType, true)
+	span, ctx, err := t.startNonReplaySpan(ctx, "StartActivity", activityType, true, trace.SpanKindClient)
 	if err != nil {
 		return err
 	}
@@ -563,7 +573,7 @@ func (t *tracingWorkflowOutboundInterceptor) ExecuteChildWorkflow(
 	args ...interface{},
 ) workflow.ChildWorkflowFuture {
 	// Start span writing to header
-	span, ctx, err := t.startNonReplaySpan(ctx, "StartChildWorkflow", childWorkflowType, false)
+	span, ctx, err := t.startNonReplaySpan(ctx, "StartChildWorkflow", childWorkflowType, false, trace.SpanKindClient)
 	if err != nil {
 		return err
 	}
@@ -583,7 +593,7 @@ func (t *tracingWorkflowOutboundInterceptor) SignalExternalWorkflow(
 	if !t.root.options.DisableSignalTracing {
 		var span TracerSpan
 		var futErr workflow.ChildWorkflowFuture
-		span, ctx, futErr = t.startNonReplaySpan(ctx, "SignalExternalWorkflow", signalName, false)
+		span, ctx, futErr = t.startNonReplaySpan(ctx, "SignalExternalWorkflow", signalName, false, trace.SpanKindClient)
 		if futErr != nil {
 			return futErr
 		}
@@ -603,7 +613,7 @@ func (t *tracingWorkflowOutboundInterceptor) SignalChildWorkflow(
 	if !t.root.options.DisableSignalTracing {
 		var span TracerSpan
 		var futErr workflow.ChildWorkflowFuture
-		span, ctx, futErr = t.startNonReplaySpan(ctx, "SignalChildWorkflow", signalName, false)
+		span, ctx, futErr = t.startNonReplaySpan(ctx, "SignalChildWorkflow", signalName, false, trace.SpanKindServer)
 		if futErr != nil {
 			return futErr
 		}
@@ -642,6 +652,7 @@ func (t *tracingWorkflowOutboundInterceptor) startNonReplaySpan(
 	operation string,
 	name string,
 	dependedOn bool,
+	kind trace.SpanKind,
 ) (span TracerSpan, newCtx workflow.Context, futErr workflow.ChildWorkflowFuture) {
 	// Noop span if replaying
 	if workflow.IsReplaying(ctx) {
@@ -658,6 +669,7 @@ func (t *tracingWorkflowOutboundInterceptor) startNonReplaySpan(
 		},
 		ToHeader: true,
 		Time:     time.Now(),
+		Kind:     kind,
 	})
 	if err != nil {
 		return nopSpan{}, ctx, newErrFut(ctx, err)

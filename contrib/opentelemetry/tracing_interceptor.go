@@ -182,7 +182,7 @@ func (t *tracer) StartSpan(opts *interceptor.TracerStartSpanOptions) (intercepto
 	}
 
 	// Create span
-	span := t.options.SpanStarter(ctx, t.options.Tracer, opts.Operation+":"+opts.Name, trace.WithTimestamp(opts.Time))
+	span := t.options.SpanStarter(ctx, t.options.Tracer, opts.Operation+":"+opts.Name, trace.WithTimestamp(opts.Time), trace.WithSpanKind(opts.Kind))
 
 	// Set tags
 	if len(opts.Tags) > 0 {
@@ -192,7 +192,6 @@ func (t *tracer) StartSpan(opts *interceptor.TracerStartSpanOptions) (intercepto
 		}
 		span.SetAttributes(attrs...)
 	}
-
 	return &tracerSpan{Span: span}, nil
 }
 
